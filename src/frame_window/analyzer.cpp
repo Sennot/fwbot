@@ -23,7 +23,7 @@
 using namespace geode::prelude;
 
 namespace {
-constexpr const char* FW_BUILD = "silicate-1.0.2-fw.1";
+constexpr const char* FW_BUILD = "silicate-1.0.2-fw.5";
 constexpr const char* REQUIRED_GEODE = "5.8.2";
 constexpr const char* REQUIRED_GD = "2.2081";
 #ifndef SILICATE_FW_GIT_SHA
@@ -130,6 +130,10 @@ bool FrameWindowAnalyzer::start() {
     m_forceFullReset = false;
     m_resetScheduled = false;
     m_runtimeCaptured = false;
+    m_attemptArmed = false;
+    m_resetInProgress = false;
+    m_attemptSerial = 0;
+    m_ignoredPreArmDeaths = 0;
     m_results.clear();
     m_sequenceResults.clear();
     m_selectedActionIndices.clear();
@@ -351,12 +355,19 @@ void FrameWindowAnalyzer::finish() {
 
 void FrameWindowAnalyzer::scheduleFullReset() {
     if (m_resetScheduled) return;
+    m_attemptArmed = false;
     m_resetScheduled = true;
+    logEvent(fmt::format("RESET SCHEDULE phase={} current_input={} trial={} ",
+                         phaseName(m_phase), currentInputNumber(),
+                         m_currentTrial ? m_currentTrial->label : "none"));
     Bot::get()->scheduler().schedule(
         [this]() {
             m_resetScheduled = false;
             auto* pl = PlayLayer::get();
             if (!pl || !isActive()) return;
+            logEvent(fmt::format("RESET FIRE phase={} frame={}",
+                                 phaseName(m_phase),
+                                 Bot::get()->updater().getFrame()));
             if (auto* ell = pl->getChildByID("EndLevelLayer")) {
                 ell->removeFromParent();
             }
@@ -415,7 +426,7 @@ FrameWindowAnalyzer::PlayerSnapshot FrameWindowAnalyzer::snapshotPlayer(
 void FrameWindowAnalyzer::onReplayAction(size_t actionIndex,
                                          const slc::Action& action,
                                          GJBaseGameLayer* layer) {
-    if (!isActive() || !isPlayerAction(action)) return;
+    if (!isActive() || !m_attemptArmed || !isPlayerAction(action)) return;
 
     auto* player = action.m_player2 ? layer->m_player2 : layer->m_player1;
     if (m_phase == Phase::Baseline) {
@@ -445,7 +456,7 @@ void FrameWindowAnalyzer::onReplayAction(size_t actionIndex,
 }
 
 void FrameWindowAnalyzer::onFrame(uint64_t frame, GJBaseGameLayer* layer) {
-    if (!isActive()) return;
+    if (!isActive() || !m_attemptArmed) return;
 
     if (m_runStartFrame == 0 && frame <= 2) m_runStartFrame = frame;
 
@@ -491,12 +502,36 @@ FrameWindowAnalyzer::TrialRecord FrameWindowAnalyzer::makeOutcome(
 void FrameWindowAnalyzer::onDeath(PlayerObject* player, GameObject* object) {
     if (!isActive()) return;
     const uint64_t frame = Bot::get()->updater().getFrame();
-    if (m_phase == Phase::Baseline) {
-        fail(fmt::format("Baseline replay died at frame {} (object {}).", frame,
-                         object ? object->m_objectID : 0));
+    const int objectId = object ? object->m_objectID : 0;
+    logEvent(fmt::format(
+        "DEATH SIGNAL phase={} frame={} object={} armed={} reset={} "
+        "trial_installed={} attempt={}",
+        phaseName(m_phase), frame, objectId, m_attemptArmed,
+        m_resetInProgress, m_trialInstalled, m_attemptSerial));
+
+    // fullReset/resetLevel can destroy or recycle a player while preparing the
+    // next attempt. Those lifecycle signals are not deaths of the baseline or
+    // trial being measured. Only accept deaths after reset completion arms the
+    // new attempt.
+    if (!m_attemptArmed) {
+        ++m_ignoredPreArmDeaths;
+        logEvent(fmt::format(
+            "DEATH IGNORED pre-arm phase={} frame={} object={} ignored_count={}",
+            phaseName(m_phase), frame, objectId, m_ignoredPreArmDeaths));
+        writeLatestState("death-ignored-pre-arm");
         return;
     }
-    if (!m_currentTrial || !m_trialInstalled) return;
+
+    m_attemptArmed = false;
+    if (m_phase == Phase::Baseline) {
+        fail(fmt::format("Baseline replay died at frame {} (object {}).", frame,
+                         objectId));
+        return;
+    }
+    if (!m_currentTrial || !m_trialInstalled) {
+        logEvent("DEATH IGNORED because no installed trial is active");
+        return;
+    }
 
     auto record = makeOutcome(TrialOutcome::Death, frame, "Player died", player,
                               object);
@@ -517,6 +552,12 @@ bool FrameWindowAnalyzer::onDelayedReset(PlayLayer* layer) {
 bool FrameWindowAnalyzer::onLevelComplete(PlayLayer* layer) {
     if (!isActive()) return false;
     const uint64_t frame = Bot::get()->updater().getFrame();
+    if (!m_attemptArmed) {
+        logEvent(fmt::format("COMPLETE IGNORED pre-arm phase={} frame={}",
+                             phaseName(m_phase), frame));
+        return true;
+    }
+    m_attemptArmed = false;
 
     if (m_phase == Phase::Baseline) {
         m_baselineCompletionFrame = frame;
@@ -554,10 +595,18 @@ bool FrameWindowAnalyzer::onLevelComplete(PlayLayer* layer) {
 void FrameWindowAnalyzer::onResetBegin(PlayLayer*) {
     if (!isActive()) return;
 
+    m_attemptArmed = false;
+    m_resetInProgress = true;
+    logEvent(fmt::format(
+        "RESET BEGIN phase={} frame={} current_input={} trial={} installed={}",
+        phaseName(m_phase), Bot::get()->updater().getFrame(),
+        currentInputNumber(), m_currentTrial ? m_currentTrial->label : "none",
+        m_trialInstalled));
+
     if (m_phase == Phase::Baseline) {
         restoreOriginalActions();
         m_runStartFrame = 0;
-        writeLatestState("baseline-reset");
+        writeLatestState("baseline-reset-begin");
         return;
     }
 
@@ -590,7 +639,7 @@ void FrameWindowAnalyzer::onResetBegin(PlayLayer*) {
     m_trialInstalled = true;
     m_runStartFrame = 0;
 
-    logEvent(fmt::format("TRIAL START phase={} label={} offsets={}",
+    logEvent(fmt::format("TRIAL INSTALL phase={} label={} offsets={}",
                          phaseName(m_phase), m_currentTrial->label,
                          [&]() {
                              std::string out;
@@ -604,7 +653,25 @@ void FrameWindowAnalyzer::onResetBegin(PlayLayer*) {
                              }
                              return out;
                          }()));
-    writeLatestState("trial-start");
+    writeLatestState("trial-reset-begin");
+}
+
+void FrameWindowAnalyzer::onResetEnd(PlayLayer*) {
+    if (!isActive()) return;
+
+    m_resetInProgress = false;
+    ++m_attemptSerial;
+    m_attemptArmed = true;
+    m_runStartFrame = Bot::get()->updater().getFrame();
+
+    logEvent(fmt::format(
+        "ATTEMPT ARMED phase={} frame={} attempt={} current_input={} trial={} "
+        "installed={}",
+        phaseName(m_phase), m_runStartFrame, m_attemptSerial,
+        currentInputNumber(), m_currentTrial ? m_currentTrial->label : "none",
+        m_trialInstalled));
+    writeLatestState(m_phase == Phase::Baseline ? "baseline-armed"
+                                                 : "trial-armed");
 }
 
 bool FrameWindowAnalyzer::makeTrialActions(const TrialSpec& spec,
@@ -807,6 +874,7 @@ void FrameWindowAnalyzer::finalizeCurrentInput() {
     result.earliestOffset = early;
     result.latestOffset = late;
     result.frameWindow = static_cast<uint32_t>(late - early + 1);
+    result.analyzed = true;
     result.discontinuous = std::any_of(
         result.passingOffsets.begin(), result.passingOffsets.end(),
         [early, late](int offset) { return offset < early || offset > late; });
@@ -1036,6 +1104,12 @@ void FrameWindowAnalyzer::writeLatestState(const std::string& event) {
     out << "  \"currentInput\": " << currentInputNumber() << ",\n";
     out << "  \"baselineCompletionFrame\": " << m_baselineCompletionFrame
         << ",\n";
+    out << "  \"attemptArmed\": " << (m_attemptArmed ? "true" : "false")
+        << ",\n";
+    out << "  \"resetInProgress\": "
+        << (m_resetInProgress ? "true" : "false") << ",\n";
+    out << "  \"attemptSerial\": " << m_attemptSerial << ",\n";
+    out << "  \"ignoredPreArmDeaths\": " << m_ignoredPreArmDeaths << ",\n";
     out << "  \"trial\": ";
     if (!m_currentTrial) {
         out << "null\n";
@@ -1159,6 +1233,7 @@ bool FrameWindowAnalyzer::importNaNDL(const std::filesystem::path& path) {
                 frameNumbers ? time : time * std::max(1.0, gameFps)));
             r.frameWindow = fw;
             r.imported = true;
+            r.analyzed = true;
             r.passingOffsets.clear();
             m_results.push_back(std::move(r));
         }
@@ -1171,6 +1246,7 @@ bool FrameWindowAnalyzer::importNaNDL(const std::filesystem::path& path) {
             if (it == m_results.end()) continue;
             it->frameWindow = fw;
             it->imported = true;
+            it->analyzed = true;
         }
     }
 
@@ -1211,6 +1287,12 @@ void FrameWindowAnalyzer::writeFullDiagnosticsTo(
     out << "  \"analysisInitialTPS\": " << m_analysisInitialTps << ",\n";
     out << "  \"variableTPS\": " << (m_variableTps ? "true" : "false")
         << ",\n";
+    out << "  \"attemptArmed\": " << (m_attemptArmed ? "true" : "false")
+        << ",\n";
+    out << "  \"resetInProgress\": "
+        << (m_resetInProgress ? "true" : "false") << ",\n";
+    out << "  \"attemptSerial\": " << m_attemptSerial << ",\n";
+    out << "  \"ignoredPreArmDeaths\": " << m_ignoredPreArmDeaths << ",\n";
 
     out << "  \"originalReplayActions\": [\n";
     for (size_t i = 0; i < m_originalActions.size(); ++i) {
@@ -1254,7 +1336,8 @@ void FrameWindowAnalyzer::writeFullDiagnosticsTo(
             << ", \"coupled\": " << (r.coupled ? "true" : "false")
             << ", \"coupledPassingVariants\": "
             << r.coupledPassingVariants << ", \"imported\": "
-            << (r.imported ? "true" : "false") << ", \"passingOffsets\": [";
+            << (r.imported ? "true" : "false") << ", \"analyzed\": "
+            << (r.analyzed ? "true" : "false") << ", \"passingOffsets\": [";
         for (size_t j = 0; j < r.passingOffsets.size(); ++j) {
             if (j) out << ", ";
             out << r.passingOffsets[j];

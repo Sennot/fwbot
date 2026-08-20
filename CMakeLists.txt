@@ -8,7 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS true)
 
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc /FS")
 
-project(silicate VERSION 1.0.0)
+project(silicate VERSION 1.0.5)
 
 set(ARC_FEATURE_FULL ON CACHE BOOL "" FORCE)
 

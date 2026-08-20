@@ -28,24 +28,22 @@ jobs:
           target: Win64
           build-config: RelWithDebInfo
           export-pdb: true
-          bundle-pdb: true
+          bundle-pdb: false
           configure-args: -DGEODE_DONT_INSTALL_MODS=ON -DFW_GIT_SHA=${{ github.sha }}
 
-      - name: Upload mod + debug symbols
+      - name: Upload mod
         uses: actions/upload-artifact@v7
         with:
           name: silicate-frame-window-win64-${{ github.sha }}
-          path: ${{ steps.build.outputs.build-output }}
+          path: ${{ steps.build.outputs.build-output }}/*.geode
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
-      - name: Upload exact source used for build
+      - name: Upload debug symbols (short retention)
         uses: actions/upload-artifact@v7
         with:
-          name: silicate-frame-window-source-${{ github.sha }}
-          path: |
-            .
-            !build/**
-            !.git/**
-          if-no-files-found: error
-          retention-days: 30
+          name: silicate-frame-window-pdb-${{ github.sha }}
+          path: ${{ steps.build.outputs.build-output }}/*.pdb
+          if-no-files-found: warn
+          retention-days: 3
+

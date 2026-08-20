@@ -462,6 +462,10 @@ struct SLPlayLayer : Modify<SLPlayLayer, PlayLayer> {
         bot->replaySystem().onReset(bot->updater().getFrame());
         bot->autoclicker().reset();
 
+        // Frame Window only accepts death/completion signals after Silicate's
+        // replay index and updater state belong to the fresh attempt.
+        bot->frameWindow().onResetEnd(this);
+
         // And re-update trajectory
         bot->trajectory().update(this);
 

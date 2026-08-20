@@ -96,6 +96,7 @@ class FrameWindowAnalyzer {
         bool coupled = false;
         uint32_t coupledPassingVariants = 0;
         bool imported = false;
+        bool analyzed = false;
     };
 
     struct SequenceResult {
@@ -146,6 +147,7 @@ class FrameWindowAnalyzer {
     void onDeath(PlayerObject* player, GameObject* object);
     bool onLevelComplete(PlayLayer* layer);
     void onResetBegin(PlayLayer* layer);
+    void onResetEnd(PlayLayer* layer);
     bool onDelayedReset(PlayLayer* layer);
     void onQuit();
 
@@ -188,6 +190,10 @@ class FrameWindowAnalyzer {
     bool m_forceFullReset = false;
     bool m_resetScheduled = false;
     bool m_runtimeCaptured = false;
+    bool m_attemptArmed = false;
+    bool m_resetInProgress = false;
+    uint64_t m_attemptSerial = 0;
+    uint64_t m_ignoredPreArmDeaths = 0;
 
     uint64_t m_runStartFrame = 0;
     uint64_t m_baselineCompletionFrame = 0;

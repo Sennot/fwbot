@@ -1325,19 +1325,26 @@ void UIManager::draw() {
                         for (int i = clipper.DisplayStart;
                              i < clipper.DisplayEnd; ++i) {
                             const auto& r = fw.results()[i];
-                            const auto line = fmt::format(
-                                "#{:04} | F {:>7} | {} | P{} | {} {} | FW {} "
-                                "[{:+},{:+}]{}{}{}",
-                                r.inputNumber, r.originalFrame, r.gameMode,
-                                r.player2 ? 2 : 1,
-                                FrameWindowAnalyzer::buttonName(r.button),
-                                r.holding ? "Press" : "Release", r.frameWindow,
-                                r.earliestOffset, r.latestOffset,
-                                r.coupled ? " | COUPLED" : "",
-                                r.discontinuous ? " | DISCONTINUOUS" : "",
-                                (r.earlyTruncated || r.lateTruncated)
-                                    ? " | RADIUS LIMIT"
-                                    : "");
+                            const auto line = r.analyzed
+                                ? fmt::format(
+                                      "#{:04} | F {:>7} | {} | P{} | {} {} | FW {} "
+                                      "[{:+},{:+}]{}{}{}",
+                                      r.inputNumber, r.originalFrame, r.gameMode,
+                                      r.player2 ? 2 : 1,
+                                      FrameWindowAnalyzer::buttonName(r.button),
+                                      r.holding ? "Press" : "Release", r.frameWindow,
+                                      r.earliestOffset, r.latestOffset,
+                                      r.coupled ? " | COUPLED" : "",
+                                      r.discontinuous ? " | DISCONTINUOUS" : "",
+                                      (r.earlyTruncated || r.lateTruncated)
+                                          ? " | RADIUS LIMIT"
+                                          : "")
+                                : fmt::format(
+                                      "#{:04} | F {:>7} | {} | P{} | {} {} | PENDING",
+                                      r.inputNumber, r.originalFrame, r.gameMode,
+                                      r.player2 ? 2 : 1,
+                                      FrameWindowAnalyzer::buttonName(r.button),
+                                      r.holding ? "Press" : "Release");
                             ImGui::TextUnformatted(line.c_str());
                         }
                     }

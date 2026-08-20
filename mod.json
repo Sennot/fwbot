@@ -5,7 +5,7 @@
   },
   "id": "framewindow.silicate",
   "name": "Silicate Frame Window",
-  "version": "v1.0.2-fw.2",
+  "version": "v1.0.5",
   "developer": "peony (upstream) + Frame Window fork",
   "description": "Silicate 1.0.2 with a NaN-style Frame Window Analyzer for replay press/release timings.",
   "issues": {
