@@ -120,5 +120,13 @@ setup_geode_mod(${PROJECT_NAME})
 # promotes warnings to errors, so suppress only this extension diagnostic for
 # Clang instead of changing Silicate/Geode source or weakening -Werror globally.
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(${PROJECT_NAME} PRIVATE -Wno-dollar-in-identifier-extension)
+    # Geode enables -Wpedantic later through interface compile options. That
+    # can re-enable -Wdollar-in-identifier-extension even if a preceding
+    # -Wno-dollar-in-identifier-extension is present. Keep the diagnostic
+    # visible, but make this one documented Geode extension exempt from the
+    # project's global -Werror. The warning-specific no-error setting is more
+    # specific than -Werror and therefore survives the final option ordering.
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        -Wno-error=dollar-in-identifier-extension
+    )
 endif()
