@@ -113,3 +113,12 @@ target_link_libraries(${PROJECT_NAME} libslc)
 target_compile_options(GeodeBindings PRIVATE -Wno-overloaded-virtual -Wno-unused-variable)
 
 setup_geode_mod(${PROJECT_NAME})
+
+# Geode intentionally exposes convenience macros such as $on_mod and $execute.
+# They are valid and documented Geode API, but clang++ in GNU driver mode emits
+# -Wdollar-in-identifier-extension for the '$' token. The Win64 Geode toolchain
+# promotes warnings to errors, so suppress only this extension diagnostic for
+# Clang instead of changing Silicate/Geode source or weakening -Werror globally.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wno-dollar-in-identifier-extension)
+endif()
