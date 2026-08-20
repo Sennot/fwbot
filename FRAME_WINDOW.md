@@ -81,6 +81,10 @@ All diagnostics are written under the mod persistent directory in `frame-window/
 
 For a normal logic bug, send `frame-window-debug.json`. For a hard crash during a trial, also send `latest-trial.json` and `frame-window.log`. GitHub Actions exports/bundles Windows PDB symbols in `RelWithDebInfo`, so keep the build artifact or build SHA with the report.
 
+## Build-fix history
+
+- `v1.0.2-fw.2`: make upstream `/W4` conditional on the actual MSVC compiler. The current Geode Win64 GitHub Action drives `clang++.exe`; passing `/W4` to that GNU-style frontend makes Clang treat it as a filename and abort while creating the PCH. No replay, bot, physics, or Frame Window logic changed in this fix.
+
 ## Build policy
 
 This fork intentionally ships **one supported build path: GitHub Actions**.

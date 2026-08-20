@@ -73,7 +73,14 @@ add_library(${PROJECT_NAME} SHARED
 set(FW_GIT_SHA "unknown" CACHE STRING "Git commit embedded in Frame Window diagnostics")
 target_compile_definitions(${PROJECT_NAME} PRIVATE SILICATE_FW_GIT_SHA="${FW_GIT_SHA}")
 
-target_compile_options(${PROJECT_NAME} PRIVATE /W4)
+# Silicate upstream used /W4 unconditionally. Current Geode Win64 CI uses
+# clang++ with the GNU-style command-line frontend, where /W4 is parsed as a
+# file path and fails before any project source is compiled. Keep the upstream
+# warning level only when CMake is actually driving MSVC. Geode supplies its
+# own Clang warning flags for the Win64 toolchain.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(${PROJECT_NAME} PRIVATE /W4)
+endif()
 target_include_directories(${PROJECT_NAME} PRIVATE src include)
 
 if (NOT DEFINED ENV{GEODE_SDK})
