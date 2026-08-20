@@ -1,0 +1,59 @@
+{
+  "geode": "5.8.2",
+  "gd": {
+    "win": "2.2081"
+  },
+  "id": "framewindow.silicate",
+  "name": "Silicate Frame Window",
+  "version": "v1.0.2-fw.1",
+  "developer": "peony (upstream) + Frame Window fork",
+  "description": "Silicate 1.0.2 with a NaN-style Frame Window Analyzer for replay press/release timings.",
+  "issues": {
+    "info": "For Frame Window bugs, export frame-window-debug.json from the mod and attach it with the GitHub Actions build SHA."
+  },
+  "tags": [
+    "cheat",
+    "gameplay",
+    "utility"
+  ],
+  "links": {
+    "community": "https://discord.gg/y7xagk3C2m",
+    "source": "https://git.silicate.dev/silicate/silicate"
+  },
+  "resources": {
+    "files": [
+      "resources/fonts/font_main.ttf",
+      "resources/fonts/font_bold.ttf",
+      "resources/fonts/font_medium.ttf",
+      "resources/fonts/font_symbols.ttf",
+      "resources/title.png",
+      "resources/title_gay.png",
+      "resources/title_new.png",
+      "resources/title_gay_new.png",
+      "resources/title_trans_new.png",
+      "resources/title_jolly_new.png"
+    ],
+    "sprites": [
+      "resources/silicate-button.png"
+    ]
+  },
+  "incompatibilities": {
+    "zilko.xdbot": "2.4.0",
+    "chagh.tcbot": "0.1.0",
+    "fig.zbot": "3.0.0-beta.10",
+    "kepe.ybot": "0.1.0",
+    "astralteam.astral": "0.1.0",
+    "sabe.platformersaves": "1.1.2",
+    "square3ang.cbfextrapolate": "2.3.3",
+    "chizz.subtick-inputs-api": "0.6.0",
+    "chizz.superb-input-precision": "0.1.4",
+    "hiimjasmine00.checkpoint-switcher": "1.0.1",
+    "viper.restart_from_any_checkpoint": "1.0.0",
+    "kevadroz.practicecheckpointpermanence": "1.4.3",
+    "blueblock6.transparent_checkpoints": "1.0.7",
+    "peony.silicate": "1.0.2"
+  },
+  "dependencies": {
+    "geode.node-ids": ">=1.22.0"
+  }
+}

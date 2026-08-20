@@ -1,0 +1,51 @@
+name: Build Win64 (Geode)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-win64:
+    name: Win64 RelWithDebInfo
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Build Silicate Frame Window
+        id: build
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: given
+          target: Win64
+          build-config: RelWithDebInfo
+          export-pdb: true
+          bundle-pdb: true
+          configure-args: -DGEODE_DONT_INSTALL_MODS=ON -DFW_GIT_SHA=${{ github.sha }}
+
+      - name: Upload mod + debug symbols
+        uses: actions/upload-artifact@v7
+        with:
+          name: silicate-frame-window-win64-${{ github.sha }}
+          path: ${{ steps.build.outputs.build-output }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload exact source used for build
+        uses: actions/upload-artifact@v7
+        with:
+          name: silicate-frame-window-source-${{ github.sha }}
+          path: |
+            .
+            !build/**
+            !.git/**
+          if-no-files-found: error
+          retention-days: 30
