@@ -2,6 +2,12 @@
 
 Delivery state: source implementation / testing candidate, 2026-09-11.
 
+Build-log follow-up: corrected the mixed `target_link_libraries` signatures by
+passing `LINK_TYPE PRIVATE` to `setup_geode_mod`. Geode 5.8.2 explicitly parses
+this argument and uses it for both SDK and dependency linkage. The reported
+Windows configuration error is addressed; a subsequent full Windows build has
+not been run here.
+
 ## Executed locally
 
 - GNU C++ 13.3.0 on Linux compiled the portable core and test executable.

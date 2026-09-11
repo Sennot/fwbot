@@ -45,5 +45,6 @@ if(FWL_BUILD_MOD)
     if(MSVC)
         target_compile_options(${PROJECT_NAME} PRIVATE /EHsc /utf-8)
     endif()
-    setup_geode_mod(${PROJECT_NAME})
+    # Match the keyword signature used above, including Geode's dependency links.
+    setup_geode_mod(${PROJECT_NAME} LINK_TYPE PRIVATE)
 endif()
