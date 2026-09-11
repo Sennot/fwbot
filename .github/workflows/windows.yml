@@ -1,0 +1,61 @@
+name: Build Frame Window Lab (Windows x64)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Verify toolchain
+        shell: pwsh
+        run: |
+          clang --version
+          $version = (& clang -dumpversion).Trim()
+          if ([version]$version -lt [version]'19.0') { throw 'Geode 5.8.2 requires LLVM 19 or newer.' }
+
+      - name: Test GDR import and window algorithms
+        shell: pwsh
+        run: |
+          cmake -S . -B core-build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DFWL_BUILD_MOD=OFF -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build core-build --parallel
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ctest --test-dir core-build --output-on-failure
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build Windows mod
+        uses: geode-sdk/build-geode-mod@e26ece68d56a3cfa0a7f790d8120c965008c3d08
+        id: build
+        with:
+          sdk: given
+          target: Win64
+          bindings-ref: 7f6c2a75742856de88dad354e576dcff8a28e881
+          configure-args: -DFWL_BUILD_TESTS=OFF
+          build-config: Release
+          use-lto: false
+          export-pdb: true
+
+      - name: Upload installable mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameWindowLab-Windows-x64
+          path: ${{ steps.build.outputs.build-output }}/*.geode
+          if-no-files-found: error
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameWindowLab-Windows-symbols
+          path: ${{ steps.build.outputs.build-output }}/*.pdb
+          if-no-files-found: warn

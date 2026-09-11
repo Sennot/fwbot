@@ -1,29 +1,10 @@
-# Silicate
+# Frame Window Lab
 
-Silicate is a Geometry Dash bot that can play and record levels, render them, and much more!
+Measure conditional press and release windows from GDR / GDR2 macros using native Geometry Dash replay trials.
 
-## Usage
+- Single-edge and duration-preserving hold scans
+- P1 / P2, dual and all native gamemodes
+- Repeated baseline checks and separate passing intervals
+- Boundary preview, removal tests and JSON / CSV export
 
-- Press `Left Alt` or `F` to open the menu
-- Press `V` to toggle Frame Stepper
-- Press `C` to step one frame
-- Press `B` to step one frame backwards (Backwards Stepping must be enabled)
-- Press `T` to toggle Trajectory
-
-## Features
-
-- Accurate recording and playback
-- FFmpeg based internal renderer, with shader and SFX support
-- Customizable settings and renderer presets
-- Customizable keybinds
-- Trajectory for where your player will go
-- Intentional death and multiple attempt replays
-- Other botting utility features
-
-## Discord
-
-Join the [Silicate Discord server](https://discord.gg/y7xagk3C2m) for updates, and more!
-
-## Credits
-
-Thank you to [scarlet](https://discord.com/users/960236731158921326) for contributing to Silicate's development.
+Open a level, pause, and select **FW Lab**. Uses 240 TPS whole-step input. Disable CBF, external bots and corrections before testing. See README_RU.md in the source archive for full instructions and current validation limits.
