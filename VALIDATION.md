@@ -8,6 +8,13 @@ this argument and uses it for both SDK and dependency linkage. The reported
 Windows configuration error is addressed; a subsequent full Windows build has
 not been run here.
 
+Second user-provided Windows build log: configuration succeeded, and core,
+Engine.cpp and LabPopup.cpp compiled. Hooks.cpp failed on a comparison between
+the sibling pointer types FWLBase* and PlayLayer*. That comparison now explicitly
+converts both operands to their common GJBaseGameLayer* base. Other hook pointer
+comparisons were reviewed and compare directly related types. Linking, packaging
+and runtime validation remain unconfirmed.
+
 ## Executed locally
 
 - GNU C++ 13.3.0 on Linux compiled the portable core and test executable.

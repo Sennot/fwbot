@@ -22,7 +22,9 @@ class $modify(FWLBase, GJBaseGameLayer) {
     }
     void handleButton(bool down,int button,bool isPlayer1) {
         auto&e=fwl::Engine::get();
-        if(e.protectedRun&&this==e.layer&&!e.injecting&&!e.resetting)return;
+        if(e.protectedRun &&
+           static_cast<GJBaseGameLayer*>(this)==static_cast<GJBaseGameLayer*>(e.layer) &&
+           !e.injecting && !e.resetting)return;
         GJBaseGameLayer::handleButton(down,button,isPlayer1);
     }
 };
