@@ -13,7 +13,27 @@ Engine.cpp and LabPopup.cpp compiled. Hooks.cpp failed on a comparison between
 the sibling pointer types FWLBase* and PlayLayer*. That comparison now explicitly
 converts both operands to their common GJBaseGameLayer* base. Other hook pointer
 comparisons were reviewed and compare directly related types. Linking, packaging
-and runtime validation remain unconfirmed.
+and runtime validation remained unconfirmed at that stage.
+
+## Import dialog hotfix (v1.0.1)
+
+The user subsequently confirmed that v1.0.0 built and ran, but reported that
+selecting a macro repeatedly reopened the file picker. The synchronous
+GetOpenFileNameW call inside the menu callback has been replaced with Geode
+5.8.2's asynchronous file::pick / async::spawn API. The synchronous modal input
+path is a suspected cause; the original behavior was not reproduced locally.
+
+Only one picker can be in flight across popup instances. Popup actions are
+ignored during selection, and a brief focus-return cooldown suppresses queued
+import clicks. Success imports once; cancellation and errors terminate without
+reopening. A retained popup is checked for being in the scene before using a
+late result. The unused comdlg32 dependency was removed.
+
+API signatures and callback delivery were checked against the pinned SDK's own
+manual-install picker implementation and async.hpp. Core code is unchanged.
+The hotfix has not yet been built or exercised in Windows here. Runtime checks:
+select once, double-click Import, cancel then retry, select a malformed file,
+select a valid Unicode path, and close the popup before a delayed result.
 
 ## Executed locally
 

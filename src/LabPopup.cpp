@@ -4,8 +4,8 @@
 #include <Geode/ui/NineSlice.hpp>
 #include <Geode/utils/file.hpp>
 #include <Geode/utils/cocos.hpp>
-#include <Windows.h>
-#include <commdlg.h>
+#include <Geode/utils/async.hpp>
+#include <chrono>
 #include <algorithm>
 #include <charconv>
 #include <functional>
@@ -15,16 +15,10 @@ using namespace geode::prelude;
 namespace fwl {
 namespace {
 void alert(std::string const& s){FLAlertLayer::create("Frame Window Lab",s,"OK")->show();}
-std::optional<std::filesystem::path> pickReplay(){
-    std::array<wchar_t,32768> name{};OPENFILENAMEW ofn{};ofn.lStructSize=sizeof(ofn);
-    ofn.hwndOwner=GetActiveWindow();ofn.lpstrFile=name.data();ofn.nMaxFile=static_cast<DWORD>(name.size());
-    ofn.lpstrFilter=L"Geometry Dash replays (*.gdr;*.gdr2)\0*.gdr;*.gdr2\0All files\0*.*\0\0";
-    ofn.lpstrTitle=L"Import replay into Frame Window Lab";
-    ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR|OFN_EXPLORER;
-    if(GetOpenFileNameW(&ofn))return std::filesystem::path(name.data());
-    if(CommDlgExtendedError())throw std::runtime_error("Windows file picker failed.");
-    return std::nullopt;
-}
+// Main-thread state shared by all LabPopup instances. A native dialog may
+// outlive its originating popup; never launch a second one while it is open.
+bool replayPickerOpen=false;
+std::chrono::steady_clock::time_point replayPickerReadyAt{};
 Tick integer(TextInput* input,char const* name){
     std::string s=input->getString();Tick n=0;auto [end,error]=std::from_chars(s.data(),s.data()+s.size(),n);
     if(error!=std::errc{}||end!=s.data()+s.size())throw std::runtime_error(std::string("Enter an integer for ")+name+".");return n;
@@ -33,6 +27,7 @@ Tick integer(TextInput* input,char const* name){
 class LabPopup:public Popup {
     Ref<PauseLayer> pause;
     Config draft;
+    bool importing=false;
     CCNode* body=nullptr;
     CCMenu* menu=nullptr;
     CCLabelBMFont* statusLabel=nullptr;
@@ -44,7 +39,7 @@ class LabPopup:public Popup {
     }
     void button(std::string const&s,float x,float y,std::function<void()> fn,float width=95){
         auto spr=ButtonSprite::create(s.c_str());spr->setScale(std::min(.5f,width/spr->getContentWidth()));
-        auto b=CCMenuItemExt::createSpriteExtra(spr,[fn=std::move(fn)](CCMenuItemSpriteExtra* item){Ref<CCMenuItemSpriteExtra> keep(item);auto call=fn;try{call();}catch(std::exception const&e){alert(e.what());}});
+        auto b=CCMenuItemExt::createSpriteExtra(spr,[this,fn=std::move(fn)](CCMenuItemSpriteExtra* item){if(importing)return;Ref<CCMenuItemSpriteExtra> keep(item);auto call=fn;try{call();}catch(std::exception const&e){alert(e.what());}});
         b->setPosition({x,y});menu->addChild(b);
     }
     TextInput* field(char const*name,Tick value,float x,float y,float width=100){
@@ -67,12 +62,44 @@ class LabPopup:public Popup {
     void resumeGame(){
         auto p=pause;onClose(nullptr);if(p)p->onResume(nullptr);
     }
+    void completeImport(file::PickResult result){
+        replayPickerOpen=false;
+        // Ignore queued clicks delivered when focus returns from the dialog.
+        replayPickerReadyAt=std::chrono::steady_clock::now()+std::chrono::milliseconds(500);
+        importing=false;
+        if(!isRunning())return; // closed popup: discard the late result
+        try{
+            if(result.isErr()){alert(result.unwrapErr());return;}
+            auto path=std::move(result).unwrap();
+            if(!path)return; // cancel is terminal, not a request to open again
+            auto&e=Engine::get();
+            e.load(*path);draft=e.config;home();
+        }catch(std::exception const&e){alert(e.what());}
+    }
+    void beginImport(){
+        if(importing||replayPickerOpen||std::chrono::steady_clock::now()<replayPickerReadyAt)return;
+        if(Engine::get().protectedRun)throw std::runtime_error("Stop analysis before importing.");
+        importing=true;replayPickerOpen=true;
+        try{
+            // Geode runs the Windows dialog away from the input callback and
+            // delivers this completion on the main thread. Retain the popup
+            // until completion, but do not import if it was closed meanwhile.
+            geode::async::spawn(
+                file::pick(file::PickMode::OpenFile,file::FilePickOptions{
+                    .filters={file::FilePickOptions::Filter{
+                        .description="Geometry Dash replays",
+                        .files={"*.gdr","*.gdr2"}
+                    }}
+                }),
+                [self=Ref<LabPopup>(this)](file::PickResult result){
+                    self->completeImport(std::move(result));
+                }
+            );
+        }catch(...){importing=false;replayPickerOpen=false;throw;}
+    }
     void home(){
         view=0;clear();auto&e=Engine::get();
-        button("Import GDR/GDR2",100,253,[this]{
-            if(Engine::get().protectedRun)throw std::runtime_error("Stop analysis before importing.");
-            if(auto path=pickReplay()){Engine::get().load(*path);draft=Engine::get().config;home();}
-        },155);
+        button("Import GDR/GDR2",100,253,[this]{beginImport();},155);
         button("Help",295,253,[this]{help();},70);
         button("Files",420,253,[]{file::openFolder(Mod::get()->getSaveDir());},75);
         statusLabel=text(e.progress(),255,223,.32f,475);
@@ -200,7 +227,7 @@ class LabPopup:public Popup {
         auto win=CCDirector::get()->getWinSize();m_mainLayer->setScale(std::min({1.f,(win.width-14)/510.f,(win.height-12)/300.f}));
         home();scheduleUpdate();return true;
     }
-    void update(float)override{if(statusLabel){statusLabel->setString(Engine::get().progress().c_str());statusLabel->limitLabelWidth(475,.32f,.15f);}}
+    void update(float)override{if(statusLabel){statusLabel->setString(importing?"Select a macro in the file dialog...":Engine::get().progress().c_str());statusLabel->limitLabelWidth(475,.32f,.15f);}}
 public:
     static LabPopup* create(Ref<PauseLayer>const&p){auto pop=new LabPopup;if(pop->init(p)){pop->autorelease();return pop;}delete pop;return nullptr;}
 };
