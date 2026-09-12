@@ -16,9 +16,14 @@ class $modify(FWLScheduler, CCScheduler) {
     }
 };
 class $modify(FWLBase, GJBaseGameLayer) {
+    double getModifiedDelta(float dt) {
+        auto result=GJBaseGameLayer::getModifiedDelta(dt);
+        fwl::Engine::get().observedDelta(this,dt,result);
+        return result; // observe native timing; never override physics
+    }
     void processCommands(float dt,bool isHalfTick,bool isLastTick) {
         auto&e=fwl::Engine::get();
-        if(e.beforeCommands(this,isHalfTick))GJBaseGameLayer::processCommands(dt,isHalfTick,isLastTick);
+        if(e.beforeCommands(this,dt,isHalfTick,isLastTick))GJBaseGameLayer::processCommands(dt,isHalfTick,isLastTick);
     }
     void handleButton(bool down,int button,bool isPlayer1) {
         auto&e=fwl::Engine::get();
@@ -32,7 +37,7 @@ class $modify(FWLPlay, PlayLayer) {
     void destroyPlayer(PlayerObject*player,GameObject*object) {
         auto&e=fwl::Engine::get();
         if(e.protectedRun&&e.layer==this){
-            if(object!=m_anticheatSpike)e.died(this);
+            if(object!=m_anticheatSpike)e.died(this,player,object);
             return; // quarantine the failed trial; no death animation or retry timer
         }
         PlayLayer::destroyPlayer(player,object);

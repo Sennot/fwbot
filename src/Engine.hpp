@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Model.hpp"
+#include "core/Diagnostics.hpp"
 #include <Geode/Geode.hpp>
 #include <Geode/binding/PlayLayer.hpp>
 #include <Geode/binding/PauseLayer.hpp>
@@ -14,7 +15,7 @@ public:
     Config config;
     std::vector<Row> rows;
     std::string status="Import a GDR or GDR2 replay.", fingerprint;
-    std::filesystem::path reportPath;
+    std::filesystem::path reportPath, debugPath;
     bool loaded=false, active=false, driving=false, injecting=false, resetting=false, protectedRun=false;
     bool allowLevelMismatch=false;
     Tick tick=0, actualEnd=0;
@@ -28,11 +29,13 @@ public:
     void stop(std::string reason="Cancelled; partial results saved.");
     void detach(PlayLayer*);
     void runScheduler(float realDt,std::function<void(float)> const& original);
-    bool beforeCommands(GJBaseGameLayer*,bool half);
-    void died(PlayLayer*);
+    bool beforeCommands(GJBaseGameLayer*,float dt,bool half,bool last);
+    void observedDelta(GJBaseGameLayer*,float input,double output);
+    void died(PlayLayer*,PlayerObject*,GameObject*);
     void completed(PlayLayer*);
     void unexpectedReset(PlayLayer*);
-    void saveReport();
+    void saveReport(bool withDebug=true);
+    void logIssue(std::string const&);
     std::string progress() const;
 private:
     enum class Phase { Baseline, RowCheck, Scan, Removal, Preview } phase=Phase::Baseline;
@@ -46,7 +49,15 @@ private:
     bool pendingReset=false, trialDone=false, finishing=false, restartAfterPause=false;
     std::string analysisStatus;
     Verdict trialResult=Verdict::Fail;
-    std::optional<Verdict> repeatedResult;
+    std::optional<Verdict> repeatedResult, repeatedLocal;
+    Verdict trialLocalResult=Verdict::NotMeasured;
+    Diagnostics diagnostic;
+    Diagnostics::JSON sourceFileContext=Diagnostics::JSON::object();
+    Diagnostics::JSON failureDetails=Diagnostics::JSON::object();
+    int commandCalls=0,halfCalls=0,schedulerSteps=0;
+    float commandDt=0,rawDelta=0;
+    double modifiedDelta=0;
+    bool lastCommand=false;
     Tick repeatedStop=0;
     bool originalTest=false, originalCBS=false, originalCOS=false, originalDontSave=false;
     std::uint64_t originalSeed=0;
@@ -55,6 +66,9 @@ private:
     int idleUpdates=0;
     std::chrono::steady_clock::time_point started;
     void checkEnvironment(PlayLayer*);
+    void beginDiagnostics(PlayLayer*);
+    Diagnostics::JSON traceState() const;
+    char const* phaseName() const;
     void captureEnvironment(PlayLayer*);
     void restoreEnvironment(bool reset);
     void prepareTrial();

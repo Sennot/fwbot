@@ -3,7 +3,7 @@
   "gd": { "win": "2.2081" },
   "id": "framewindowlab.analyzer",
   "name": "Frame Window Lab",
-  "version": "v1.0.1",
+  "version": "v1.1.0",
   "developer": "Frame Window Lab contributors",
   "description": "Measure conditional frame windows from GDR/GDR2 replays using native game physics.",
   "tags": ["utility", "offline"]

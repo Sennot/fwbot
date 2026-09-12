@@ -1,4 +1,5 @@
 #include "Model.hpp"
+#include "Diagnostics.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
@@ -93,4 +94,57 @@ static void exhaustiveOrder(){
         }
     }
 }
-int main(){try{parser();windows();exhaustiveOrder();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}catch(std::exception const&e){std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+static void localWindows(){
+    std::ifstream f(std::filesystem::path(FWL_FIXTURE_DIR)/"local-goal-regression.json");
+    json fixture;f>>fixture;
+    Row row;row.lower=-12;row.upper=12;row.localUpper=12;row.localEnd=fixture["localEnd"].get<Tick>();
+    auto frame=fixture["inputFrame"].get<Tick>();
+    for(auto const&p:fixture["probes"]){
+        auto v=p["result"]=="pass"?Verdict::Pass:Verdict::Fail;
+        auto off=p["offset"].get<Tick>(),stop=p["stoppedAt"].get<Tick>();
+        row.probes.push_back({off,v,stop,classifyLocal(v,stop,row.localEnd,frame+off)});
+    }
+    summarize(row);
+    check(row.targetInterval&&row.targetInterval->first==0&&row.targetInterval->last==0,"Observed goal window remains one tick");
+    check(row.localTargetInterval&&row.localTargetInterval->first==-1&&row.localTargetInterval->last==1,"Observed local window at explicit boundary 324 is three ticks");
+    check(classifyLocal(Verdict::Fail,324,324,280)==Verdict::Fail,"Collision on last simulated tick fails local boundary");
+    check(classifyLocal(Verdict::Fail,325,324,280)==Verdict::Pass,"Later collision does not invalidate earlier local survival");
+    check(classifyLocal(Verdict::Pass,324,324,280)==Verdict::Pass,"Exact reached boundary passes");
+    check(classifyLocal(Verdict::Pass,300,324,280)==Verdict::NotMeasured,"Completion before local boundary is not local success");
+    check(classifyLocal(Verdict::Pass,960,324,324)==Verdict::NotMeasured,"Unexecuted affected edge not measured locally");
+    check(classifyLocal(Verdict::Desync,960,324,280)==Verdict::Desync,"Desync never converted to local pass");
+    check(classifyLocal(Verdict::Timeout,324,324,280)==Verdict::Pass,"Timeout after reaching local boundary retains local measurement");
+    auto r=simple();auto c=settings(r);auto rows=planRows(r,c);configureLocalEndpoints(r,c,rows,200);
+    check(rows[0].localEnd==110&&rows[1].localEnd==130&&rows.back().localEnd==200,"Auto local boundary uses next same-channel edge or goal");
+    c.localEndTick=120;configureLocalEndpoints(r,c,rows,200);
+    check(rows[1].localEnd==120&&rows[1].localUpper==9&&rows[2].localEnd==0,"Explicit local boundary labels later rows not applicable");
+    c=settings(r);c.mode=ScanMode::HoldPair;rows=planRows(r,c);configureLocalEndpoints(r,c,rows,200);
+    check(rows[0].localEnd==130,"Pair local goal lies after paired release");
+    row.probes[12].localVerdict=Verdict::Unstable;summarize(row);
+    check(!row.localTargetInterval,"Unstable local zero never bridged");
+    auto doc=json::parse(reportJSON(simple(),settings(simple()),{row},"complete","test",960));
+    check(doc["rows"][0].contains("localIntervals")&&doc["rows"][0]["localEndTick"]==324,"Both observation horizons exported");
+}
+static void diagnostics(){
+    Diagnostics d({2,3,2,2,2,2});d.reset({{"test",true}});
+    d.event("one");d.event("two");d.event("three");
+    d.beginTrial({{"trial",1}});
+    for(int i=0;i<5;++i)d.frame({{"tick",i}},true,true);
+    d.localBoundary({{"tick",3}});
+    d.finishTrial({{"result","fail"}});
+    d.beginTrial({{"trial",2}});d.frame({{"tick",0}},true,false);
+    auto running=d.bundle({{"status","running"}});
+    check(running["runningTrial"]["trial"]==2,"Current trial included in manual debug export");
+    d.beginTrial({{"trial",3}}); // automatic interrupted record for trial 2
+    d.finishTrial({{"result","pass"}});
+    auto out=d.bundle({{"status","complete"}});
+    check(out["trials"].size()==2&&out["baselineStates"].size()==2,"Diagnostic arrays stay bounded");
+    check(out["dropped"]["trialSummaries"]==1&&out["dropped"]["baselineStates"]==3&&out["dropped"]["events"]==1,"Diagnostic truncation explicit");
+    check(out["dropped"]["trialStates"].get<int>()>0,"Trace budget exhaustion recorded");
+    check(out["trials"][1]["outcome"]["result"]=="interrupted_before_completion","Pause/restart does not erase interrupted trial");
+    check(out["trials"][0]["localBoundaryState"]["tick"]==3,"Observed local boundary state retained independently of tail trace");
+    check(out["analysis"]["status"]=="complete"&&out["context"]["test"]==true,"One-file bundle embeds report and reproduction context");
+    d.reset({{"newRun",true}});out=d.bundle(json::object());
+    check(out["trials"].empty()&&out["dropped"]["events"]==0,"New run clears diagnostics counters");
+}
+int main(){try{parser();windows();exhaustiveOrder();localWindows();diagnostics();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}catch(std::exception const&e){std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

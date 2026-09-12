@@ -1,6 +1,19 @@
 # Validation record
 
-Delivery state: source implementation / testing candidate, 2026-09-11.
+Delivery state: v1.1.0 source / testing candidate, 2026-09-12.
+
+## v1.1.0 checks
+
+The portable core and tests were compiled with GNU C++ 13.3.0 using undefined-behavior sanitization and fail-on-first-error. Result: **PASS: 3022 checks**, exit code 0, no UBSan diagnostics. These are assertions, not 3022 gameplay scenarios.
+
+New checks cover local-vs-goal classification, exact death boundaries, explicit/automatic/pair endpoints, unexecuted shifted inputs, independent local instability, serialized local results, diagnostic limits/drop counters, local-boundary capture, interrupted/running trials and reset behavior. The regression fixture reproduces observations from the user's old report; it is not a fresh simulation of that level.
+
+The Python debug inspector also reads the user's older report. Native hook/API fields were checked against the pinned SDK and bindings. The fresh Windows build, UI and gameplay have not run here. User confirmation and attached reports establish use of the earlier release only.
+
+Next gameplay checks: build in Windows CI; import once; compare one known passage at a manually verified local endpoint; check late failure produces Local pass / Goal fail; pause/resume and export; inspect one debug file for canonical inputs, level data, mod list, both verdicts and collision/local-boundary records. Automatic Local end is a same-channel input boundary, not a geometrically detected passage boundary.
+
+## Earlier implementation history
+
 
 Build-log follow-up: corrected the mixed `target_link_libraries` signatures by
 passing `LINK_TYPE PRIVATE` to `setup_geode_mod`. Geode 5.8.2 explicitly parses
@@ -39,8 +52,8 @@ select a valid Unicode path, and close the popup before a delayed result.
 
 - GNU C++ 13.3.0 on Linux compiled the portable core and test executable.
 - Earlier native CMake/CTest run: 1/1 test passed.
-- Final source revision compiled with `-std=c++23 -O0 -g -Wall -Wextra -Wpedantic -fsanitize=undefined -fno-sanitize-recover=all`.
-- Final executable result: **`PASS: 3000 checks`**, exit code 0; no UBSan diagnostics or compiler warnings.
+- Earlier source revision compiled with `-std=c++23 -O0 -g -Wall -Wextra -Wpedantic -fsanitize=undefined -fno-sanitize-recover=all`.
+- Earlier executable result: **`PASS: 3000 checks`**, exit code 0; no UBSan diagnostics or compiler warnings.
 - Workflow YAML parsed; manifest, Windows-only job/target and pinned bindings checked.
 - Geode-facing signatures and fields were inspected against the pinned SDK/bindings source. This is source review, not a compiled ABI test.
 

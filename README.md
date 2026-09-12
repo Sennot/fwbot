@@ -6,7 +6,9 @@ A Windows x64 Geode mod source project for measuring conditional input windows f
 
 The implementation replays trials through the native game engine for cube, ship, wave, ball, UFO, robot, spider, swing, mini forms, dual and platformer inputs. It supports individual press/release shifts, duration-preserving hold shifts, repeated baseline checks, disjoint passing intervals, removal tests, boundary previews and JSON/CSV export. Input is restricted to whole native command ticks at 240 TPS. CBF and correction-based replay are unsupported.
 
-**Testing candidate:** portable core tests have run locally. The Windows DLL, hooks, UI and actual gameplay have not been compiled/executed in the delivery environment. Native support for the listed modes describes the implementation, not a completed gameplay certification.
+**Version 1.1.0:** separate Local and Goal windows, independently repeated local verdicts, and one `*.debug.json` containing replay/level data, environment and bounded trial traces. Local end defaults to the next same-channel input; an explicit tick can be selected. This is not automatic obstacle-boundary detection. See [changes](CHANGELOG.md) and [Silicate study](SILICATE_NOTES.md).
+
+**Testing candidate:** the user ran the earlier release. Updated portable core tests have run locally. The Windows DLL, hooks, UI and actual gameplay have not been compiled/executed in the delivery environment. Native support for the listed modes describes the implementation, not a completed gameplay certification.
 
 ## Build with GitHub Actions
 

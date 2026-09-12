@@ -20,3 +20,7 @@ The GDR2 writer is authoritative for interoperability here: three-byte `GDR` mag
 No upstream GDR parser is vendored. `src/core/ReplayIO.cpp` is an independent bounded implementation. `tools/generate_fixtures.cpp` requires the pinned GDR2 upstream headers if regenerating the fixtures; building and testing this project does not fetch GDR2.
 
 The workflow pins the Geode action, SDK version and bindings. It uses the action's default current CLI and hosted runner toolchains, so the complete build environment is not bit-for-bit locked.
+
+## v1.1 analysis follow-up
+
+Studied [Silicate](https://git.silicate.dev/silicate/silicate/) at commit `f001e01e10d6f996cae682d2576256a192ce9139`. See `SILICATE_NOTES.md` for findings and limitations. No upstream implementation was copied.

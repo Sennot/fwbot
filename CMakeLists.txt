@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(FrameWindowLab VERSION 1.0.1 LANGUAGES C CXX)
+project(FrameWindowLab VERSION 1.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -10,6 +10,7 @@ add_library(fwl_core STATIC
     src/core/Analysis.cpp
     src/core/ReplayIO.cpp
     src/core/Report.cpp
+    src/core/Diagnostics.cpp
 )
 target_include_directories(fwl_core PUBLIC src/core PRIVATE vendor)
 target_compile_definitions(fwl_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -39,6 +40,7 @@ if(FWL_BUILD_MOD)
         message(FATAL_ERROR "This mod targets Windows x64 only.")
     endif()
     add_library(${PROJECT_NAME} SHARED src/Engine.cpp src/Hooks.cpp src/LabPopup.cpp)
+    target_include_directories(${PROJECT_NAME} PRIVATE vendor)
     target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
     target_link_libraries(${PROJECT_NAME} PRIVATE fwl_core)

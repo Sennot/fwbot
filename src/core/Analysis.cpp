@@ -23,6 +23,7 @@ void validateConfig(Replay const& r, Config const& c) {
     if (c.first > c.last || c.last >= r.inputs.size()) throw std::runtime_error("Invalid input range (use the 1-based numbers shown in the UI).");
     if (c.radius < 1 || c.radius > 10000) throw std::runtime_error("Scan radius must be 1..10000 ticks.");
     if (c.endTick < 0 || c.endTick > maxTick || c.frameOffset < -120 || c.frameOffset > 120) throw std::runtime_error("Invalid end tick or frame offset.");
+    if (c.localEndTick < 0 || c.localEndTick > maxTick) throw std::runtime_error("Invalid local end tick.");
     if (c.repeats < 1 || c.repeats > 10 || c.baselineRepeats < 2 || c.baselineRepeats > 10) throw std::runtime_error("Invalid repeat count.");
     if (!c.includePress && !c.includeRelease) throw std::runtime_error("Select presses and/or releases.");
     if (c.playerFilter < 0 || c.playerFilter > 2) throw std::runtime_error("Invalid player filter.");
@@ -97,16 +98,47 @@ void constrainEndpoint(Replay const& r, Config const& c, std::vector<Row>& rows,
         if(latest<=row.upper){row.upper=latest;row.rightSequenceLimit=true;}
     }
 }
+void configureLocalEndpoints(Replay const& r, Config const& c, std::vector<Row>& rows, Tick goalEnd) {
+    const auto none=r.inputs.size();
+    std::vector<std::size_t> next(none,none);
+    std::array<std::size_t,6> seen;seen.fill(none);
+    for(auto k=none;k>0;){--k;auto const&i=r.inputs[k];auto ch=(i.player2?3:0)+i.button-1;next[k]=seen[ch];seen[ch]=k;}
+    for(auto& row:rows){
+        auto tail=row.pair.value_or(row.index);
+        Tick end=c.localEndTick?c.localEndTick:(next[tail]==none?goalEnd:r.inputs[next[tail]].frame+c.frameOffset);
+        end=std::min(end,goalEnd);
+        auto tailFrame=r.inputs[tail].frame+c.frameOffset;
+        row.localEnd=end>tailFrame?end:0;
+        row.localUpper=row.localEnd?std::min(row.upper,end-1-tailFrame):row.lower-1;
+    }
+}
+Verdict classifyLocal(Verdict result, Tick stoppedAt, Tick end, Tick tail) {
+    if(end<=0 || tail>=end)return Verdict::NotMeasured;
+    if(result==Verdict::Desync)return Verdict::Desync;
+    if(result==Verdict::Unstable || result==Verdict::NotMeasured)return result;
+    // Fail at N is a collision DURING command tick N-1. To have reached the
+    // start of tick H alive, a fatal collision must occur strictly after H.
+    if(result==Verdict::Fail)return stoppedAt>end?Verdict::Pass:Verdict::Fail;
+    if(result==Verdict::Pass)return stoppedAt>=end?Verdict::Pass:Verdict::NotMeasured;
+    if(result==Verdict::Timeout)return stoppedAt>=end?Verdict::Pass:Verdict::Timeout;
+    return Verdict::NotMeasured;
+}
 void summarize(Row& r) {
     std::sort(r.probes.begin(),r.probes.end(),[](auto const&a,auto const&b){return a.offset<b.offset;});
-    r.intervals.clear(); r.targetInterval.reset();
-    for(auto const& p:r.probes) if(p.verdict==Verdict::Pass) {
-        if(r.intervals.empty() || p.offset != r.intervals.back().last+1) r.intervals.push_back({p.offset,p.offset});
-        else r.intervals.back().last=p.offset;
-    }
-    for(auto const& i:r.intervals) if(i.first<=0 && i.last>=0) r.targetInterval=i;
+    auto collect=[&](auto& intervals,auto& target,bool local){
+        intervals.clear();target.reset();
+        for(auto const&p:r.probes)if((local?p.localVerdict:p.verdict)==Verdict::Pass){
+            if(intervals.empty()||p.offset!=intervals.back().last+1)intervals.push_back({p.offset,p.offset});
+            else intervals.back().last=p.offset;
+        }
+        for(auto const&i:intervals)if(i.first<=0&&i.last>=0)target=i;
+    };
+    collect(r.intervals,r.targetInterval,false);
+    collect(r.localIntervals,r.localTargetInterval,true);
     r.leftSearchLimit = !r.intervals.empty() && r.intervals.front().first==r.lower && !r.leftSequenceLimit;
     r.rightSearchLimit = !r.intervals.empty() && r.intervals.back().last==r.upper && !r.rightSequenceLimit;
+    r.localLeftSearchLimit = !r.localIntervals.empty() && r.localIntervals.front().first==r.lower && !r.leftSequenceLimit;
+    r.localRightSearchLimit = !r.localIntervals.empty() && r.localIntervals.back().last==r.localUpper && r.localUpper==r.upper && !r.rightSequenceLimit;
 }
 Tick countPasses(Row const& r) { Tick n=0; for(auto const&i:r.intervals)n+=i.last-i.first+1;return n; }
 std::string intervalText(Row const& r) {

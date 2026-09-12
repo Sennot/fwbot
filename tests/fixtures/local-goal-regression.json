@@ -1,0 +1,133 @@
+{
+  "note": "Anonymized observations from the user-provided completed report; not a simulated gameplay fixture.",
+  "inputFrame": 280,
+  "goalEnd": 960,
+  "localEnd": 324,
+  "probes": [
+    {
+      "offset": -12,
+      "result": "fail",
+      "stoppedAt": 282
+    },
+    {
+      "offset": -11,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": -10,
+      "result": "fail",
+      "stoppedAt": 284
+    },
+    {
+      "offset": -9,
+      "result": "fail",
+      "stoppedAt": 285
+    },
+    {
+      "offset": -8,
+      "result": "fail",
+      "stoppedAt": 286
+    },
+    {
+      "offset": -7,
+      "result": "fail",
+      "stoppedAt": 287
+    },
+    {
+      "offset": -6,
+      "result": "fail",
+      "stoppedAt": 288
+    },
+    {
+      "offset": -5,
+      "result": "fail",
+      "stoppedAt": 289
+    },
+    {
+      "offset": -4,
+      "result": "fail",
+      "stoppedAt": 290
+    },
+    {
+      "offset": -3,
+      "result": "fail",
+      "stoppedAt": 291
+    },
+    {
+      "offset": -2,
+      "result": "fail",
+      "stoppedAt": 293
+    },
+    {
+      "offset": -1,
+      "result": "fail",
+      "stoppedAt": 571
+    },
+    {
+      "offset": 0,
+      "result": "pass",
+      "stoppedAt": 960
+    },
+    {
+      "offset": 1,
+      "result": "fail",
+      "stoppedAt": 325
+    },
+    {
+      "offset": 2,
+      "result": "fail",
+      "stoppedAt": 323
+    },
+    {
+      "offset": 3,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 4,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 5,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 6,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 7,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 8,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 9,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 10,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 11,
+      "result": "fail",
+      "stoppedAt": 283
+    },
+    {
+      "offset": 12,
+      "result": "fail",
+      "stoppedAt": 283
+    }
+  ]
+}

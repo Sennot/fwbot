@@ -14,7 +14,13 @@
 using namespace geode::prelude;
 namespace fwl {
 namespace {
-void alert(std::string const& s){FLAlertLayer::create("Frame Window Lab",s,"OK")->show();}
+void alert(std::string const& s){
+    auto&e=Engine::get();e.logIssue(s);e.saveReport();
+    FLAlertLayer::create("Frame Window Lab",s,"OK")->show();
+}
+std::string widthText(std::optional<Interval> const&i,bool open){
+    return i?std::to_string(i->last-i->first+1)+(open?"+":""):"n/a";
+}
 // Main-thread state shared by all LabPopup instances. A native dialog may
 // outlive its originating popup; never launch a second one while it is open.
 bool replayPickerOpen=false;
@@ -123,7 +129,7 @@ class LabPopup:public Popup {
             if(Engine::get().protectedRun)return;readDraft();draft.mode=draft.mode==ScanMode::Edge?ScanMode::HoldPair:ScanMode::Edge;
             if(draft.mode==ScanMode::HoldPair)draft.includePress=true;home();
         },120);
-        text("All modes: cube / ship / ball / UFO / wave / robot / spider / swing",255,108,.30f,475);
+        text(fmt::format("Local end: {} | Goal: {}",draft.localEndTick?std::to_string(draft.localEndTick):"next button edge",draft.endTick?std::to_string(draft.endTick):"level finish"),255,108,.30f,475);
         text("240 TPS | full-start replay | fixed other inputs | no position corrections",255,89,.28f,475);
         button("Options",75,58,[this]{if(Engine::get().protectedRun)return;readDraft();options();},100);
         button("Results",195,58,[this]{if(!Engine::get().protectedRun)readDraft();results();},100);
@@ -138,18 +144,20 @@ class LabPopup:public Popup {
         view=1;clear();text("Analysis options",255,250,.55f);
         auto reps=field("Repeats per offset",draft.repeats,130,205,155);
         auto checks=field("Baseline repeats",draft.baselineRepeats,365,205,155);
-        auto speed=field("Steps per render (max 1024)",draft.ticksPerRender,255,145,220);
+        auto speed=field("Steps per render",draft.ticksPerRender,130,145,180);
+        auto local=field("Local end (0=next edge)",draft.localEndTick,365,145,180);
         text("Higher speed runs more simulation steps between rendered frames.",255,105,.30f,465);
         text("A 10 ms budget keeps the interface responsive. Physics step stays fixed.",255,86,.28f,465);
         bool copy=Mod::get()->getSavedValue<bool>("allow-copy-id",false);
-        button(copy?"Allow copy ID: ON":"Allow copy ID: OFF",255,58,[this,reps,checks,speed,copy]{
+        button(copy?"Allow copy ID: ON":"Allow copy ID: OFF",255,58,[this,reps,checks,speed,local,copy]{
             draft.repeats=static_cast<int>(integer(reps,"repeats"));draft.baselineRepeats=static_cast<int>(integer(checks,"baseline repeats"));
-            draft.ticksPerRender=static_cast<int>(integer(speed,"speed"));Mod::get()->setSavedValue("allow-copy-id",!copy);options();
+            draft.localEndTick=integer(local,"local end");draft.ticksPerRender=static_cast<int>(integer(speed,"speed"));Mod::get()->setSavedValue("allow-copy-id",!copy);options();
         },200);
-        button("Apply",430,25,[this,reps,checks,speed]{
+        button("Apply",430,25,[this,reps,checks,speed,local]{
             auto r=integer(reps,"repeats"),b=integer(checks,"baseline repeats"),s=integer(speed,"speed");
             if(r<1||r>10||b<2||b>10||s<1||s>1024)throw std::runtime_error("Repeats: 1..10; baseline: 2..10; speed: 1..1024.");
-            draft.repeats=int(r);draft.baselineRepeats=int(b);draft.ticksPerRender=int(s);home();
+            auto localTick=integer(local,"local end");if(localTick<0||localTick>maxTick)throw std::runtime_error("Local end must be 0..10000000.");
+            draft.localEndTick=localTick;draft.repeats=int(r);draft.baselineRepeats=int(b);draft.ticksPerRender=int(s);home();
         },80);
         button("Back",75,25,[this]{home();},80);
     }
@@ -157,19 +165,21 @@ class LabPopup:public Popup {
         view=2;clear();auto&e=Engine::get();
         int pages=std::max(1,int((e.rows.size()+6)/7));page=std::clamp(page,0,pages-1);
         text(fmt::format("Results | page {}/{} | click a row",page+1,pages),255,250,.40f);
-        text("Input       Tick      Edge / player        Window       Status",255,225,.30f);
+        statusLabel=text(e.progress(),255,228,.24f,475);
+        text("Input       Tick / player       Local / Goal ticks       Status",255,207,.28f);
         for(int n=0;n<7;++n){std::size_t k=static_cast<std::size_t>(page*7+n);if(k>=e.rows.size())break;
             auto const&r=e.rows[k];auto const&i=e.replay.inputs[r.index];
-            auto count=r.targetInterval?std::to_string(r.targetInterval->last-r.targetInterval->first+1):"-";
-            auto state=r.done?(r.leftSearchLimit||r.rightSearchLimit?"open bound":"done"):"partial";
+            auto count=widthText(r.targetInterval,r.leftSearchLimit||r.rightSearchLimit);
+            auto localCount=widthText(r.localTargetInterval,r.localLeftSearchLimit||r.localRightSearchLimit);
+            auto state=r.done?(r.leftSearchLimit||r.rightSearchLimit||r.localLeftSearchLimit||r.localRightSearchLimit?"open":"done"):"partial";
             for(auto const&p:r.probes)if(p.verdict==Verdict::Unstable||p.verdict==Verdict::Timeout)state="uncertain";
-            std::string s=fmt::format("#{}   {}   {} P{}   {} ticks   {}",r.index+1,i.frame+e.config.frameOffset,i.down?"press":"release",i.player2?2:1,count,state);
-            button(s,255,198-n*22,[this,k]{selected=k;detail();},455);
+            std::string s=fmt::format("#{}  {}  {} P{}  {} / {}  {}",r.index+1,i.frame+e.config.frameOffset,i.down?"press":"release",i.player2?2:1,localCount,count,state);
+            button(s,255,185-n*22,[this,k]{selected=k;detail();},455);
         }
         if(e.rows.empty())text("No results yet. Start an analysis first.",255,150,.4f);
         button("<",60,28,[this]{--page;results();},40);
         button("Back",155,28,[this]{home();},90);
-        button("Export",300,28,[]{Engine::get().saveReport();file::openFolder(Mod::get()->getSaveDir());},100);
+        button("Debug / Export",300,28,[]{Engine::get().saveReport();file::openFolder(Mod::get()->getSaveDir());},100);
         button(">",450,28,[this]{++page;results();},40);
     }
     void detail(){
@@ -177,30 +187,30 @@ class LabPopup:public Popup {
         auto const&r=e.rows[selected];auto const&i=e.replay.inputs[r.index];
         text(fmt::format("Input #{} | {} | P{} | {}",r.index+1,i.down?"press":"release",i.player2?2:1,r.gameMode),255,249,.42f);
         text(fmt::format("Original tick {} | scanned offsets {}..{}",i.frame+e.config.frameOffset,r.lower,r.upper),255,221,.34f);
-        auto ints=intervalText(r);if(ints.size()>160)ints=ints.substr(0,157)+"...";
-        text("Passing offsets: "+ints,255,195,.32f,470);
-        auto w=r.targetInterval?std::to_string(r.targetInterval->last-r.targetInterval->first+1):"none";
-        text(fmt::format("Window containing original input: {} | all passing ticks: {}",w,countPasses(r)),255,171,.31f,470);
-        auto removal=r.removal?verdictName(*r.removal):"not tested";
-        text(std::string("Removing this ")+(r.pair?"hold pair":"edge")+": "+removal,255,147,.32f,470);
-        std::string bounds="Bounds: ";
-        bounds+=r.leftSearchLimit?"left not found":r.leftSequenceLimit?"left sequence/start limit":r.done?"left scan complete":"left incomplete";
-        bounds+=" | ";bounds+=r.rightSearchLimit?"right not found":r.rightSequenceLimit?"right sequence/end limit":r.done?"right scan complete":"right incomplete";
-        text(bounds,255,123,.28f,470);
+        auto goal=widthText(r.targetInterval,r.leftSearchLimit||r.rightSearchLimit);
+        auto local=widthText(r.localTargetInterval,r.localLeftSearchLimit||r.localRightSearchLimit);
+        text(fmt::format("LOCAL: {} ticks | end {}",local,r.localEnd?std::to_string(r.localEnd):"not applicable"),255,195,.36f,470);
+        text(fmt::format("GOAL: {} ticks | end {} | fixed remaining inputs",goal,e.actualEnd),255,171,.31f,470);
+        auto ints=intervalText(r);if(ints.size()>80)ints=ints.substr(0,77)+"...";
+        text("Goal passing offsets: "+ints,255,147,.28f,470);
+        auto later=std::count_if(r.probes.begin(),r.probes.end(),[](auto const&p){return p.localVerdict==Verdict::Pass&&p.verdict==Verdict::Fail;});
+        text(fmt::format("{} offsets survive locally but die later | + means open bound",later),255,123,.27f,470);
         previewOffset=field("Preview offset",0,95,77,130);
-        button("Early",225,77,[this]{auto const&r=Engine::get().rows[selected];previewOffset->setString(std::to_string(r.targetInterval?r.targetInterval->first:0));},75);
-        button("Late",330,77,[this]{auto const&r=Engine::get().rows[selected];previewOffset->setString(std::to_string(r.targetInterval?r.targetInterval->last:0));},75);
+        button("Local early",225,77,[this]{auto const&r=Engine::get().rows[selected];previewOffset->setString(std::to_string(r.localTargetInterval?r.localTargetInterval->first:0));},75);
+        button("Local late",330,77,[this]{auto const&r=Engine::get().rows[selected];previewOffset->setString(std::to_string(r.localTargetInterval?r.localTargetInterval->last:0));},75);
         button("Play",440,77,[this]{
             auto&e=Engine::get();auto off=integer(previewOffset,"preview offset");e.preview(PlayLayer::get(),selected,off);resumeGame();
         },75);
         button("Back",85,28,[this]{results();},90);
         button("Copy details",270,28,[this]{
             auto&e=Engine::get();auto const&r=e.rows[selected];
-            std::ostringstream s;s<<"Input #"<<r.index+1<<"\nOffsets: "<<intervalText(r)<<"\n";
-            for(auto const&p:r.probes)s<<p.offset<<": "<<verdictName(p.verdict)<<" @ "<<p.stoppedAt<<"\n";
+            std::ostringstream s;s<<"Input #"<<r.index+1<<"\nGoal offsets: "<<intervalText(r)<<"\nLocal end: "<<r.localEnd<<"\nLocal offsets: ";
+            for(auto const&i:r.localIntervals)s<<i.first<<".."<<i.last<<"; ";
+            s<<"\nRemoval (goal): "<<(r.removal?verdictName(*r.removal):"pending")<<"\nStatus: "<<e.status<<"\n";
+            for(auto const&p:r.probes)s<<p.offset<<": local="<<verdictName(p.localVerdict)<<", goal="<<verdictName(p.verdict)<<" @ boundary "<<p.stoppedAt<<"\n";
             clipboard::write(s.str());
         },140);
-        button("Export",430,28,[]{Engine::get().saveReport();file::openFolder(Mod::get()->getSaveDir());},90);
+        button("Debug",430,28,[]{Engine::get().saveReport();file::openFolder(Mod::get()->getSaveDir());},90);
     }
     void help(){
         view=4;clear();
@@ -210,12 +220,12 @@ class LabPopup:public Popup {
             "3. Select input numbers, scan radius and endpoint.",
             "4. End tick 0 means actual level completion, not the last input.",
             "5. Start scan. Esc pauses; Resume continues the same job.",
-            "6. Results show separate passing intervals and open bounds.",
+            "6. Results: LOCAL / GOAL windows; + means an open bound.",
             "Single edge moves one press/release; Hold pair moves both.",
-            "Other inputs remain fixed. Windows depend on the chosen macro.",
+            "Local end: Options; 0 = next edge of the same button/player.",
             "CBF, external bots/corrections/speedhack must be disabled.",
             "A baseline failure means no valid measurement. Try frame offset.",
-            "A pass after removing an edge only applies to this tested section.",
+            "Debug exports one .debug.json with inputs, level, trials and states.",
             "Full details and Russian instructions are included in README_RU.md."
         };
         for(std::size_t k=0;k<lines.size();++k)text(lines[k],255,250-float(k)*17,.29f,475);
@@ -223,7 +233,7 @@ class LabPopup:public Popup {
     }
     bool init(Ref<PauseLayer> const&p){
         if(!Popup::init(510,300,"GJ_square02.png"))return false;
-        pause=p;draft=Engine::get().config;setTitle("Frame Window Lab", "goldFont.fnt",.65f,17);
+        pause=p;draft=Engine::get().config;setTitle("Frame Window Lab 1.1", "goldFont.fnt",.65f,17);
         auto win=CCDirector::get()->getWinSize();m_mainLayer->setScale(std::min({1.f,(win.width-14)/510.f,(win.height-12)/300.f}));
         home();scheduleUpdate();return true;
     }

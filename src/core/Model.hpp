@@ -26,7 +26,7 @@ struct Replay {
     std::vector<Tick> deaths;
 };
 struct Interval { Tick first = 0, last = 0; };
-enum class Verdict { Pass, Fail, Unstable, Desync, Timeout };
+enum class Verdict { Pass, Fail, Unstable, Desync, Timeout, NotMeasured };
 inline char const* verdictName(Verdict v) {
     switch(v) {
         case Verdict::Pass: return "pass";
@@ -34,6 +34,7 @@ inline char const* verdictName(Verdict v) {
         case Verdict::Unstable: return "unstable";
         case Verdict::Desync: return "desync";
         case Verdict::Timeout: return "timeout";
+        case Verdict::NotMeasured: return "not_measured";
     }
     return "unknown";
 }
@@ -41,6 +42,7 @@ enum class ScanMode { Edge, HoldPair };
 struct Config {
     std::size_t first = 0, last = 0;
     Tick radius = 12, endTick = 0;
+    Tick localEndTick = 0; // 0: next edge of the same player/button; otherwise explicit boundary
     Tick frameOffset = 0;
     int repeats = 2, baselineRepeats = 3;
     int ticksPerRender = 64;
@@ -52,6 +54,7 @@ struct Probe {
     Tick offset = 0;
     Verdict verdict = Verdict::Fail;
     Tick stoppedAt = 0;
+    Verdict localVerdict = Verdict::NotMeasured;
 };
 struct Row {
     std::size_t index = 0;
@@ -65,6 +68,10 @@ struct Row {
     std::vector<Interval> intervals; // offsets, inclusive, never bridge holes
     std::optional<Interval> targetInterval;
     std::optional<Verdict> removal;
+    Tick localEnd = 0, localUpper = 0;
+    std::vector<Interval> localIntervals;
+    std::optional<Interval> localTargetInterval;
+    bool localLeftSearchLimit = false, localRightSearchLimit = false;
 };
 Replay parseReplay(std::vector<std::uint8_t> const& bytes, std::string source = {});
 Replay readReplay(std::filesystem::path const& path);
@@ -73,6 +80,8 @@ void validateConfig(Replay const&, Config const&);
 std::vector<Row> planRows(Replay const&, Config const&);
 std::vector<Input> makeTrial(Replay const&, Config const&, Row const*, Tick offset, bool remove = false);
 void constrainEndpoint(Replay const&, Config const&, std::vector<Row>&, Tick endpoint);
+void configureLocalEndpoints(Replay const&, Config const&, std::vector<Row>&, Tick goalEnd);
+Verdict classifyLocal(Verdict goalResult, Tick stoppedAt, Tick localEnd, Tick affectedTail);
 void summarize(Row&);
 Tick countPasses(Row const&);
 std::string intervalText(Row const&);

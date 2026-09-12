@@ -10,6 +10,7 @@
 
 using namespace geode::prelude;
 namespace fwl {
+using JSON=Diagnostics::JSON;
 Engine& Engine::get(){static Engine e;return e;}
 static std::string modeOf(PlayerObject* p){
     if(!p)return "none";
@@ -20,11 +21,23 @@ static std::string modeOf(PlayerObject* p){
 }
 void Engine::load(std::filesystem::path const&p){
     if(active||protectedRun)throw std::runtime_error("Stop the current analysis before importing.");
-    auto parsed=readReplay(p);replay=std::move(parsed);loaded=true;rows.clear();baseline.clear();actualEnd=0;
-    reportPath.clear();fingerprint.clear();analysisStatus.clear();phase=Phase::Baseline;
+    std::error_code ec;auto size=std::filesystem::file_size(p,ec);
+    if(ec||size==0||size>32*1024*1024)throw std::runtime_error("Replay must be readable, nonempty and at most 32 MiB.");
+    auto read=file::readBinary(p);if(!read)throw std::runtime_error(read.unwrapErr());
+    auto bytes=std::move(read).unwrap();auto name=p.filename().u8string();
+    auto parsed=parseReplay(bytes,std::string(name.begin(),name.end()));
+    constexpr std::size_t rawLimit=2*1024*1024;
+    auto kept=std::min(bytes.size(),rawLimit);std::string raw;raw.reserve(kept*2);
+    constexpr char hex[]="0123456789abcdef";
+    for(std::size_t i=0;i<kept;++i){raw+=hex[bytes[i]>>4];raw+=hex[bytes[i]&15];}
+    sourceFileContext={{"byteCount",bytes.size()},{"fnv1a64",hexHash(hashBytes(bytes.data(),bytes.size()))},
+        {"encoding","hex"},{"bytes",std::move(raw)},{"truncated",kept<bytes.size()},{"keptBytes",kept}};
+    replay=std::move(parsed);loaded=true;rows.clear();baseline.clear();actualEnd=0;
+    reportPath.clear();debugPath.clear();diagnostic.reset(JSON::object());fingerprint.clear();analysisStatus.clear();phase=Phase::Baseline;
     config.first=0;config.last=replay.inputs.size()-1;
     status=fmt::format("{} inputs | {} | {} TPS",replay.inputs.size(),replay.format,replay.tps);
     if(replay.extensionsIgnored)status+=" | corrections/extensions ignored";
+    log::info("Imported {}: {} inputs, {} TPS, bot {}, seed {}", replay.source,replay.inputs.size(),replay.tps,replay.bot,replay.seed);
     ++revision;
 }
 void Engine::checkEnvironment(PlayLayer*pl){
@@ -42,9 +55,71 @@ void Engine::checkEnvironment(PlayLayer*pl){
         if(!Loader::get()->getLoadedMod(id)||id==std::string(Mod::get()->getID()))continue;
         if(id.find("click_between_frames")!=std::string::npos||id.find("xdbot")!=std::string::npos||
            id.find("silifork")!=std::string::npos||id.find("silicate")!=std::string::npos||
-           id.find("megahack")!=std::string::npos||id.find("eclipse")!=std::string::npos)
+           (id.find("megahack")!=std::string::npos||id=="absolllute.hackmega")||id.find("eclipse")!=std::string::npos)
             throw std::runtime_error("Disable conflicting mod in Geode and restart: "+id+". Import its macro here instead.");
     }
+}
+char const* Engine::phaseName()const{
+    switch(phase){case Phase::Baseline:return "baseline";case Phase::RowCheck:return "row-baseline";
+        case Phase::Scan:return "offset-scan";case Phase::Removal:return "removal";case Phase::Preview:return "preview";}
+    return "unknown";
+}
+void Engine::observedDelta(GJBaseGameLayer*base,float input,double output){
+    if(active&&base==layer){rawDelta=input;modifiedDelta=output;}
+}
+void Engine::logIssue(std::string const&message){
+    if(diagnostic.empty()&&!active)beginDiagnostics(PlayLayer::get());
+    log::warn("{}",message);diagnostic.event("error",{{"message",message},{"tick",tick},{"phase",phaseName()}});
+}
+void Engine::beginDiagnostics(PlayLayer*pl){
+    phase=Phase::Baseline;
+    auto stamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    reportPath=Mod::get()->getSaveDir()/fmt::format("analysis-{}.json",stamp);
+    debugPath=Mod::get()->getSaveDir()/fmt::format("analysis-{}.debug.json",stamp);
+    JSON mods=JSON::array();
+    for(auto*m:Loader::get()->getAllMods())mods.push_back({{"id",std::string(m->getID())},
+        {"version",m->getVersion().toVString()},{"loaded",Loader::get()->getLoadedMod(m->getID())!=nullptr}});
+    JSON inputs=JSON::array();
+    for(auto const&i:replay.inputs)inputs.push_back({{"tick",i.frame},{"button",i.button},{"player",i.player2?2:1},{"down",i.down}});
+    auto*loader=Loader::get()->getLoadedMod("geode.loader");
+    JSON context={{"createdUnixMilliseconds",stamp},{"modVersion",Mod::get()->getVersion().toVString()},
+        {"runtimeGeode",loader?loader->getVersion().toVString():"unknown"},{"bindingsCommit","7f6c2a75742856de88dad354e576dcff8a28e881"},
+        {"schedulerTimeScale",CCScheduler::get()->getTimeScale()},{"mods",mods},{"sourceFile",sourceFileContext},
+        {"replay",{{"source",replay.source},{"format",replay.format},{"bot",replay.bot},{"seed",replay.seed},{"tps",replay.tps},
+            {"duration",replay.duration},{"ldm",replay.ldm},{"platformer",replay.platformer},{"extensionsIgnored",replay.extensionsIgnored},
+            {"inputs",inputs},{"plannedDeaths",replay.deaths}}},
+        {"settings",{{"radius",config.radius},{"frameOffset",config.frameOffset},{"goalEnd",config.endTick},{"localEnd",config.localEndTick},
+            {"repeats",config.repeats},{"baselineRepeats",config.baselineRepeats},{"stepsPerRender",config.ticksPerRender},
+            {"playerFilter",config.playerFilter},{"includePress",config.includePress},{"includeRelease",config.includeRelease},
+            {"allowLevelMismatch",allowLevelMismatch}}}};
+    if(pl&&pl->m_level){auto const&str=pl->m_level->m_levelString;
+        // Preserve level data and canonical inputs in the SAME file for repro.
+        context["level"]={{"id",int(pl->m_level->m_levelID)},{"serializedLevel",std::string(str.data(),str.size())},
+            {"fingerprint",hexHash(hashBytes(str.data(),str.size()))},{"practice",pl->m_isPracticeMode},
+            {"hasStartPos",pl->m_startPosObject!=nullptr},{"ldm",pl->m_lowDetailMode},
+            {"clickBetweenSteps",pl->m_clickBetweenSteps},{"clickOnSteps",pl->m_clickOnSteps}};
+    }
+    diagnostic.reset(std::move(context));
+}
+JSON Engine::traceState()const{
+    if(!layer)return JSON::object();
+    JSON players=JSON::array();
+    for(auto*p:{layer->m_player1,layer->m_player2}){
+        if(!p){players.push_back(nullptr);continue;}
+        JSON held=JSON::array();for(int b=1;b<=3;++b){auto it=p->m_holdingButtons.find(b);held.push_back(it!=p->m_holdingButtons.end()&&it->second);}
+        players.push_back({{"x",p->getPositionX()},{"y",p->getPositionY()},{"vy",p->m_yVelocity},
+            {"speed",p->m_playerSpeed},{"mode",modeOf(p)},{"size",p->m_vehicleSize},{"held",held},
+            {"onGround",p->m_isOnGround},{"onSlope",p->m_isOnSlope},{"dashing",p->m_isDashing},{"jumpBuffered",p->m_jumpBuffered}});
+    }
+    JSON due=JSON::array();
+    for(auto k=cursor;k<trial.size()&&trial[k].frame<=tick;++k){auto const&i=trial[k];
+        due.push_back({{"trialInputIndex",k},{"frame",i.frame},{"button",i.button},{"player",i.player2?2:1},{"down",i.down}});
+    }
+    return {{"tick",tick},{"nativeProgress",layer->m_gameState.m_currentProgress},{"nativeStep",layer->m_currentStep},
+        {"levelTime",layer->m_gameState.m_levelTime},{"totalTime",layer->m_gameState.m_totalTime},
+        {"timeWarp",layer->m_gameState.m_timeWarp},{"seed",GameToolbox::getfast_srand()},{"dual",layer->m_gameState.m_isDualMode},
+        {"rawDelta",rawDelta},{"modifiedDelta",modifiedDelta},{"commandDt",commandDt},{"lastCommand",lastCommand},
+        {"players",players},{"inputsAboutToInject",due},{"inputsDelivered",cursor}};
 }
 void Engine::captureEnvironment(PlayLayer*pl){
     layer=pl;originalTest=pl->m_isTestMode;originalCBS=pl->m_clickBetweenSteps;originalCOS=pl->m_clickOnSteps;
@@ -54,15 +129,21 @@ void Engine::captureEnvironment(PlayLayer*pl){
 }
 void Engine::start(PlayLayer*pl,Config const&c){
     if(active||protectedRun)throw std::runtime_error("Analysis already running.");
-    checkEnvironment(pl);auto planned=planRows(replay,c);
+    std::vector<Row> planned;
+    try{checkEnvironment(pl);planned=planRows(replay,c);}catch(std::exception const&e){
+        config=c;rows.clear();baseline.clear();actualEnd=0;fingerprint.clear();beginDiagnostics(pl);
+        status=std::string("Cannot start: ")+e.what();logIssue(status);saveReport();throw;
+    }
     auto const&levelText=pl->m_level->m_levelString;
     fingerprint=hexHash(hashBytes(levelText.data(),levelText.size()));
     config=c;rows=std::move(planned);baseline.clear();actualEnd=0;currentRow=0;completedTrials=0;
-    baselineRuns=0;repeat=0;repeatedResult.reset();phase=Phase::Baseline;
+    baselineRuns=0;repeat=0;repeatedResult.reset();repeatedLocal.reset();phase=Phase::Baseline;
     captureEnvironment(pl);active=true;finishing=false;pendingReset=true;trialDone=false;
     started=std::chrono::steady_clock::now();status="Checking baseline replay...";analysisStatus=status;restartAfterPause=false;
-    auto stamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    reportPath=Mod::get()->getSaveDir()/fmt::format("analysis-{}.json",stamp);++revision;
+    beginDiagnostics(pl);
+    diagnostic.event("analysis_start",{{"rows",rows.size()},{"goalEnd",config.endTick},{"localEnd",config.localEndTick}});
+    log::info("Analysis start: {} rows, goal {}, local {}, radius {}, repeats {}",rows.size(),config.endTick,config.localEndTick,config.radius,config.repeats);
+    saveReport();++revision;
 }
 void Engine::preview(PlayLayer*pl,std::size_t row,Tick off){
     if(active||protectedRun)throw std::runtime_error("Stop analysis before preview.");
@@ -77,7 +158,11 @@ void Engine::preview(PlayLayer*pl,std::size_t row,Tick off){
     captureEnvironment(pl);active=true;finishing=false;pendingReset=true;trialDone=false;previewAccumulator=0;
     status="Preview running at normal speed. Esc pauses.";++revision;
 }
-void Engine::stop(std::string reason){if(!protectedRun)return;status=std::move(reason);active=false;finishing=true;++revision;}
+void Engine::stop(std::string reason){
+    if(!protectedRun)return;
+    status=std::move(reason);diagnostic.event("stop",{{"reason",status},{"phase",phaseName()},{"tick",tick}});
+    log::info("{}",status);active=false;finishing=true;++revision;
+}
 void Engine::restoreEnvironment(bool reset){
     auto*pl=layer;if(!pl)return;
     if(reset){
@@ -99,15 +184,21 @@ void Engine::restoreEnvironment(bool reset){
 }
 void Engine::detach(PlayLayer*pl){
     if(layer!=pl)return;
-    if(protectedRun){status="Level closed; partial results saved.";active=false;saveReport();restoreEnvironment(false);}
+    if(protectedRun){status="Level closed; partial results saved.";active=false;diagnostic.event("level_closed",{{"tick",tick}});saveReport();restoreEnvironment(false);}
     layer=nullptr;active=false;protectedRun=false;finishing=false;driving=false;
 }
-void Engine::saveReport(){
+void Engine::saveReport(bool withDebug){
     if(reportPath.empty())return;
     try{
-        auto text=reportJSON(replay,config,rows,phase==Phase::Preview?analysisStatus:status,fingerprint,actualEnd);
+        auto report=JSON::parse(reportJSON(replay,config,rows,phase==Phase::Preview?analysisStatus:status,fingerprint,actualEnd));
+        report["debugFile"]=debugPath.filename().string();
+        auto text=report.dump(2);
         auto result=file::writeStringSafe(reportPath,text);
         if(!result)throw std::runtime_error(result.unwrapErr());
+        if(withDebug&&!diagnostic.empty()){
+            auto debugResult=file::writeStringSafe(debugPath,diagnostic.bundle(report).dump());
+            if(!debugResult)throw std::runtime_error(debugResult.unwrapErr());
+        }
         auto csv=reportPath;csv.replace_extension(".csv");
         auto csvResult=file::writeStringSafe(csv,reportCSV(replay,config,rows));
         if(!csvResult)throw std::runtime_error(csvResult.unwrapErr());
@@ -120,6 +211,7 @@ void Engine::finishJob(){
 }
 void Engine::prepareTrial(){
     auto*pl=layer;pendingReset=false;trialDone=false;tick=0;cursor=0;modeCursor=0;idleUpdates=0;
+    commandCalls=halfCalls=schedulerSteps=0;failureDetails=JSON::object();
     bool changed=phase==Phase::Scan||phase==Phase::Removal||phase==Phase::Preview;
     auto*row=changed?&rows[phase==Phase::Preview?previewRow:currentRow]:nullptr;
     auto delta=phase==Phase::Preview?previewOffset:offset;
@@ -128,6 +220,9 @@ void Engine::prepareTrial(){
     if(phase==Phase::Removal)firstChanged=replay.inputs[row->index].frame+config.frameOffset;
     auto last=replay.inputs.back().frame+config.frameOffset;
     timeoutTick=config.endTick?config.endTick:std::min<Tick>(maxTick,std::max<Tick>(last+240*60,static_cast<Tick>(std::min(replay.duration,36000.0)*240)+240*60));
+    diagnostic.beginTrial({{"trial",completedTrials+1},{"phase",phaseName()},{"row",row?JSON(row->index+1):JSON(nullptr)},
+        {"offset",changed?delta:0},{"repeat",repeat+1},{"baselineRun",baselineRuns+1},{"firstChangedTick",row?JSON(firstChanged):JSON(nullptr)},
+        {"localEnd",row?row->localEnd:0},{"timeoutTick",timeoutTick}});
     resetting=true;GameToolbox::fast_srand(replay.seed);pl->resetLevelFromStart();
     pl->m_isTestMode=true;pl->m_level->m_dontSave=true;pl->m_clickBetweenSteps=false;pl->m_clickOnSteps=true;
     pl->m_resumeTimer=0;pl->m_queuedButtons.clear();pl->m_queuedRecordedButtons.clear();pl->m_queuedReplayButtons.clear();
@@ -151,19 +246,43 @@ std::uint64_t Engine::snapshot()const{
     add(layer->m_gameState.m_levelTime);add(layer->m_gameState.m_currentProgress);
     auto seed=GameToolbox::getfast_srand();add(seed);return h;
 }
-void Engine::finishTrial(Verdict result,Tick at){if(trialDone)return;trialDone=true;trialResult=result;trialStopped=at;}
-bool Engine::beforeCommands(GJBaseGameLayer*base,bool half){
+void Engine::finishTrial(Verdict result,Tick at){
+    if(trialDone)return;
+    trialDone=true;trialResult=result;trialStopped=at;trialLocalResult=Verdict::NotMeasured;
+    if(phase==Phase::Scan||phase==Phase::Preview){
+        auto const&r=rows[phase==Phase::Preview?previewRow:currentRow];
+        auto delta=phase==Phase::Preview?previewOffset:offset;
+        trialLocalResult=classifyLocal(result,at,r.localEnd,replay.inputs[r.pair.value_or(r.index)].frame+config.frameOffset+delta);
+    }
+    diagnostic.finishTrial({{"result",verdictName(result)},{"localResult",verdictName(trialLocalResult)},
+        {"stoppedAtBoundary",at},{"lastSimulatedTick",at?JSON(at-1):JSON(nullptr)},{"inputsDelivered",cursor},
+        {"nextInputTick",cursor<trial.size()?JSON(trial[cursor].frame):JSON(nullptr)},
+        {"commandCalls",commandCalls},{"halfCalls",halfCalls},{"schedulerSteps",schedulerSteps},{"details",failureDetails}});
+    if(phase==Phase::Baseline||phase==Phase::RowCheck||result==Verdict::Desync)
+        log::info("{}: {} at boundary {}, inputs {}, commands {}, half {}",phaseName(),verdictName(result),at,cursor,commandCalls,halfCalls);
+}
+bool Engine::beforeCommands(GJBaseGameLayer*base,float dt,bool half,bool last){
     if(!active||resetting||base!=layer)return true;
     if(trialDone)return false;
+    ++commandCalls;if(half)++halfCalls;commandDt=dt;lastCommand=last;
     // Half steps belong to the same 240 TPS command tick; do not double-count.
     if(half)return true;
     if(layer->m_resumeTimer>0)return true;
     idleUpdates=0;
     auto state=snapshot();
+    auto trace=traceState();trace["fingerprint"]=hexHash(state);
+    bool near=firstChanged!=maxTick && tick>=std::max<Tick>(0,firstChanged-3) && tick<=firstChanged+4;
+    if(phase==Phase::Scan||phase==Phase::Preview){
+        auto const&r=rows[phase==Phase::Preview?previewRow:currentRow];
+        if(r.localEnd&&tick==r.localEnd)diagnostic.localBoundary(trace);
+    }
+    diagnostic.frame(std::move(trace),near,phase==Phase::Baseline&&baselineRuns==0);
     if(phase==Phase::Baseline&&baselineRuns==0)baseline.push_back(state);
     else if(phase!=Phase::Preview){
         bool compare=phase==Phase::Baseline||phase==Phase::RowCheck||tick<firstChanged;
         if(compare&&(std::size_t(tick)>=baseline.size()||baseline[static_cast<std::size_t>(tick)]!=state)){
+            failureDetails={{"actualFingerprint",hexHash(state)},
+                {"expectedFingerprint",std::size_t(tick)<baseline.size()?JSON(hexHash(baseline[static_cast<std::size_t>(tick)])):JSON(nullptr)}};
             finishTrial(Verdict::Desync,tick);return false;
         }
     }
@@ -185,7 +304,13 @@ bool Engine::beforeCommands(GJBaseGameLayer*base,bool half){
     }
     injecting=false;++tick;return true;
 }
-void Engine::died(PlayLayer*pl){if(active&&pl==layer&&!resetting)finishTrial(Verdict::Fail,tick);}
+void Engine::died(PlayLayer*pl,PlayerObject*player,GameObject*object){
+    if(!active||pl!=layer||resetting||trialDone)return;
+    failureDetails={{"player",player==pl->m_player2?2:1},{"collisionObjectID",object?JSON(object->m_objectID):JSON(nullptr)},
+        {"objectPosition",object?JSON::array({object->getPositionX(),object->getPositionY()}):JSON(nullptr)},
+        {"deathState",traceState()},{"positionPhase","death callback, after input injection"}};
+    finishTrial(Verdict::Fail,tick);
+}
 void Engine::completed(PlayLayer*pl){
     if(!active||pl!=layer||resetting)return;
     // A shifted edge that never ran is not a measured passing input.
@@ -201,7 +326,7 @@ void Engine::completed(PlayLayer*pl){
 void Engine::unexpectedReset(PlayLayer*pl){if(active&&pl==layer&&!resetting)stop("External restart interrupted analysis; results saved.");}
 void Engine::consumeTrial(){
     ++completedTrials;
-    if(phase==Phase::Preview){stop(fmt::format("Preview: {} at tick {} (offset {:+}).",verdictName(trialResult),trialStopped,previewOffset));return;}
+    if(phase==Phase::Preview){stop(fmt::format("Preview: local {} | goal {} at tick {} (offset {:+}).",verdictName(trialLocalResult),verdictName(trialResult),trialStopped,previewOffset));return;}
     if(trialResult==Verdict::Desync){stop(fmt::format("DESYNC at tick {}. Check macro offset, seed and other mods; partial results saved.",trialStopped));return;}
     if(phase==Phase::Baseline||phase==Phase::RowCheck){
         if(trialResult!=Verdict::Pass){stop(fmt::format("Baseline {} at tick {}. No valid window measurement. Check offset/physics/level.",verdictName(trialResult),trialStopped));return;}
@@ -211,21 +336,31 @@ void Engine::consumeTrial(){
         if(phase==Phase::Baseline){
             // Never scan events that the successful baseline never reached.
             constrainEndpoint(replay,config,rows,actualEnd);
+            configureLocalEndpoints(replay,config,rows,actualEnd);
             if(rows.empty()){stop("No selected inputs occur before the baseline endpoint.");return;}
         }
-        phase=Phase::Scan;offset=rows[currentRow].lower;repeat=0;repeatedResult.reset();pendingReset=true;return;
+        phase=Phase::Scan;offset=rows[currentRow].lower;repeat=0;repeatedResult.reset();repeatedLocal.reset();pendingReset=true;return;
     }
+    if(!repeatedLocal)repeatedLocal=trialLocalResult;
+    else if(*repeatedLocal!=trialLocalResult)repeatedLocal=Verdict::Unstable;
     if(!repeatedResult){repeatedResult=trialResult;repeatedStop=trialStopped;}
     else if(*repeatedResult!=trialResult||repeatedStop!=trialStopped)repeatedResult=Verdict::Unstable;
     if(++repeat<config.repeats){pendingReset=true;return;}
-    auto result=*repeatedResult;repeat=0;repeatedResult.reset();auto&row=rows[currentRow];
+    auto result=*repeatedResult;auto localResult=*repeatedLocal;repeat=0;repeatedResult.reset();repeatedLocal.reset();auto&row=rows[currentRow];
     if(phase==Phase::Scan){
-        row.probes.push_back({offset,result,trialStopped});summarize(row);++revision;
+        row.probes.push_back({offset,result,trialStopped,localResult});summarize(row);++revision;
         if(offset==0&&result!=Verdict::Pass){stop("Zero-offset replay stopped matching the baseline. Analysis stopped.");return;}
         if(++offset<=row.upper){pendingReset=true;return;}
         phase=Phase::Removal;offset=0;pendingReset=true;return;
     }
-    row.removal=result;row.done=true;summarize(row);saveReport();++revision;
+    row.removal=result;row.done=true;summarize(row);
+    diagnostic.event("row_complete",{{"input",row.index+1},{"localEnd",row.localEnd},
+        {"localWindow",row.localTargetInterval?JSON(row.localTargetInterval->last-row.localTargetInterval->first+1):JSON(nullptr)},
+        {"goalWindow",row.targetInterval?JSON(row.targetInterval->last-row.targetInterval->first+1):JSON(nullptr)}});
+    log::info("Input #{} done: local {} ticks (end {}), goal {} ticks",row.index+1,
+        row.localTargetInterval?row.localTargetInterval->last-row.localTargetInterval->first+1:0,row.localEnd,
+        row.targetInterval?row.targetInterval->last-row.targetInterval->first+1:0);
+    saveReport((currentRow+1)%5==0);++revision;
     if(++currentRow>=rows.size()){stop("Analysis complete. JSON and CSV saved.");return;}
     phase=Phase::RowCheck;pendingReset=true;
 }
@@ -236,6 +371,7 @@ void Engine::runScheduler(float realDt,std::function<void(float)>const&original)
     if(layer->m_isPaused){restartAfterPause=true;original(realDt);return;}
     if(restartAfterPause){
         restartAfterPause=false;pendingReset=true;
+        diagnostic.event("resume_restarting_trial",{{"tickBeforeRestart",tick},{"phase",phaseName()}});
         if(phase==Phase::Baseline&&baselineRuns==0)baseline.clear();
     }
     driving=true;
@@ -245,7 +381,7 @@ void Engine::runScheduler(float realDt,std::function<void(float)>const&original)
     for(int i=0;i<limit&&active&&layer&&!layer->m_isPaused;++i){
         if(pendingReset)prepareTrial();
         if(!active)break;
-        original(1.f/240.f);
+        ++schedulerSteps;original(1.f/240.f);
         if(trialDone)consumeTrial();
         if(++idleUpdates>2400){stop("No physics commands received. Check pause state and conflicting mods.");break;}
         if(std::chrono::steady_clock::now()-began>std::chrono::milliseconds(10))break;
